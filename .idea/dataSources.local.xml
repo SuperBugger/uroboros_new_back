@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="dataSourceStorageLocal" created-in="PY-241.15989.155">
+    <data-source name="uroboros" uuid="2adc76c1-1f69-46a3-ad35-5f331fc6d06d">
+      <database-info product="" version="" jdbc-version="" driver-name="" driver-version="" dbms="POSTGRES" />
+      <secret-storage>master_key</secret-storage>
+      <user-name>owner</user-name>
+      <schema-mapping />
+    </data-source>
+  </component>
+</project>
