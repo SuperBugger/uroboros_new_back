@@ -41,6 +41,61 @@ class Base(object):
         )
         process.wait()
 
+    def export_data(self, data, format_type, filename, headers):
+        """Экспорт данных в CSV, Excel, PDF или HTML"""
+
+        if format_type == 'csv':
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            for row in data:
+                writer.writerow(row.values())
+            return output.getvalue(), 'text/csv', f'attachment; filename="{filename}.csv"'
+
+        elif format_type == 'excel':
+            output = io.BytesIO()
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.append(headers)
+            for row in data:
+                sheet.append(list(row.values()))
+            workbook.save(output)
+            return output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', f'attachment; filename="{filename}.xlsx"'
+
+        elif format_type == 'pdf':
+            output = io.BytesIO()
+            pdf = canvas.Canvas(output, pagesize=A4)
+            pdf.setTitle(filename)
+            pdf.setFont("Helvetica", 12)
+            y = 800
+            pdf.drawString(50, y, " | ".join(headers))
+            y -= 20
+            for row in data:
+                pdf.drawString(50, y, " | ".join(str(value) for value in row.values()))
+                y -= 20
+                if y < 50:
+                    pdf.showPage()
+                    y = 800
+            pdf.save()
+            return output.getvalue(), 'application/pdf', f'attachment; filename="{filename}.pdf"'
+
+        elif format_type == 'print':
+            output = io.StringIO()
+            output.write("<html><body>")
+            output.write(f"<h1>{filename.capitalize()}</h1>")
+            output.write("<table border='1'><thead><tr>")
+            for header in headers:
+                output.write(f"<th>{header}</th>")
+            output.write("</tr></thead><tbody>")
+            for row in data:
+                output.write("<tr>")
+                for value in row.values():
+                    output.write(f"<td>{value}</td>")
+                output.write("</tr>")
+            output.write("</tbody></table>")
+            output.write("</body></html>")
+            return output.getvalue(), 'text/html', None
+
 
 class Project(Base):
     def get_total_count(self):
