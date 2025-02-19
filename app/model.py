@@ -1851,8 +1851,13 @@ class CVE(Base):
         SELECT COUNT(*)
         FROM debtracker.cve c
         LEFT JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-        LEFT JOIN debtracker.pkg_version pv ON cr.pkg_repository_id = pv.pkg_vrs_id
+        LEFT JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
         LEFT JOIN debtracker.package p ON pv.pkg_id = p.pkg_id
+        LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
+        LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
+        LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
+        LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
+        LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
         WHERE p.pkg_name = %s
         """
         result = self.db_helper.execute_query(query, [pkg_name])
