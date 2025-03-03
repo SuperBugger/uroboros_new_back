@@ -5,14 +5,18 @@ import csv
 import io
 import falcon
 import openpyxl
+import bcrypt
 from jinja2 import Template
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB
 from connection import DbHelper
-from model import Project, Assembly, Package, Vulnerability, Changelog, CVE, BDU, Stats, Breadcrumb
+from model import Project, Assembly, Package, Vulnerability, Changelog, CVE, BDU, Stats, Breadcrumb, User, \
+    AssemblyCompare, OlderAssemblies
 from api.query_commands.base_query import QueryError
+
+SECRET_ADMIN_CODE = "admin"
 
 
 def timeit(method):
@@ -46,172 +50,6 @@ def timeit_all_methods(cls):
                 return attr
 
     return NewCls
-
-
-# class ProjectResource:
-#     def __init__(self):
-#         self.project = Project()
-#
-#     def on_get(self, req, resp):
-#         # Проверяем, требуется ли экспорт данных
-#         export_all = req.get_param_as_bool('export_all', default=False)
-#         export_format = req.get_param('format', default=None)  # Получаем формат экспорта
-#
-#         # Пагинация, поиск и сортировка по проектам
-#         start = int(req.get_param('start', default=0))
-#         length = int(req.get_param('length', default=10))
-#         search_value = req.get_param('search[value]', default='')
-#         order_column = req.get_param('order_column', default=None)
-#         order_dir = req.get_param('order_dir', default=None)
-#
-#         # if export_format:
-#         #     if export_all:
-#         #         # Получаем все проекты без пагинации
-#         #         projects = self.project.get_all_projects()
-#         #     else:
-#         #         # Получаем проекты с учетом пагинации и фильтров
-#         #         projects = self.project.get_prj_paginated(start, length, search_value, order_column, order_dir)
-#         #
-#         #     # Обрабатываем экспорт в зависимости от формата
-#         #     if export_format == 'csv':
-#         #         output = io.StringIO()
-#         #         writer = csv.writer(output)
-#         #         # Exclude 'Project ID' column
-#         #         writer.writerow(['Project Name', 'Description', 'Vendor', 'Architecture'])
-#         #         for prj in projects:
-#         #             writer.writerow([
-#         #                 prj['prj_name'],
-#         #                 prj['prj_desc'],
-#         #                 prj['vendor'],
-#         #                 prj['arch_name']
-#         #             ])
-#         #
-#         #         resp.body = output.getvalue()
-#         #         resp.content_type = 'text/csv'
-#         #         resp.append_header('Content-Disposition', 'attachment; filename="projects.csv"')
-#         #         resp.status = falcon.HTTP_200
-#         #         return
-#         #
-#         #     elif export_format == 'excel':
-#         #         output = io.BytesIO()
-#         #         workbook = openpyxl.Workbook()
-#         #         sheet = workbook.active
-#         #         sheet.title = "Projects"
-#         #         # Exclude 'Project ID' column
-#         #         sheet.append(['Project Name', 'Description', 'Vendor', 'Architecture'])
-#         #         for prj in projects:
-#         #             sheet.append([
-#         #                 prj['prj_name'],
-#         #                 prj['prj_desc'],
-#         #                 prj['vendor'],
-#         #                 prj['arch_name']
-#         #             ])
-#         #         workbook.save(output)
-#         #         resp.body = output.getvalue()
-#         #         resp.content_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-#         #         resp.append_header('Content-Disposition', 'attachment; filename="projects.xlsx"')
-#         #         resp.status = falcon.HTTP_200
-#         #         return
-#         #
-#         #     elif export_format == 'pdf':
-#         #         output = io.BytesIO()
-#         #         pdf = canvas.Canvas(output, pagesize=A4)
-#         #         pdf.setTitle("Projects")
-#         #         pdf.setFont("Helvetica", 16)
-#         #         pdf.drawString(100, 800, "Projects List")
-#         #         pdf.setFont("Helvetica", 10)
-#         #         y = 780
-#         #         pdf.drawString(50, y, "Project Name    Description    Vendor    Architecture")
-#         #         y -= 20
-#         #         for prj in projects:
-#         #             pdf.drawString(50, y,
-#         #                            f"{prj['prj_name']}    {prj['prj_desc']}    {prj['vendor']}    {prj['arch_name']}")
-#         #             y -= 20
-#         #             if y < 50:
-#         #                 pdf.showPage()
-#         #                 y = 800
-#         #         pdf.save()
-#         #         resp.body = output.getvalue()
-#         #         resp.content_type = 'application/pdf'
-#         #         resp.append_header('Content-Disposition', 'attachment; filename="projects.pdf"')
-#         #         resp.status = falcon.HTTP_200
-#         #         return
-#         #
-#         #     elif export_format == 'print':
-#         #         output = io.StringIO()
-#         #         output.write("<html><body>")
-#         #         output.write("<h1>Projects List</h1>")
-#         #         output.write(
-#         #             "<table border='1'><thead><tr><th>Project Name</th><th>Description</th><th>Vendor</th><th>Architecture</th></tr></thead><tbody>")
-#         #         for prj in projects:
-#         #             output.write(
-#         #                 f"<tr><td>{prj['prj_name']}</td><td>{prj['prj_desc']}</td><td>{prj['vendor']}</td><td>{prj['arch_name']}</td></tr>")
-#         #         output.write("</tbody></table>")
-#         #         output.write("</body></html>")
-#         #         resp.body = output.getvalue()
-#         #         resp.content_type = 'text/html'
-#         #         resp.status = falcon.HTTP_200
-#         #         return
-#         if export_format:
-#             if export_all:
-#                 projects = self.project.get_all_projects()
-#             else:
-#                 projects = self.project.get_prj_paginated(start, length, search_value, order_column, order_dir)
-#
-#             headers = ['Project Name', 'Description', 'Vendor', 'Architecture']
-#             export_data = [dict(prj) for prj in projects]
-#
-#             resp.body, resp.content_type, content_disposition = self.export_data(
-#                 export_data, export_format, 'projects', headers
-#             )
-#             if content_disposition:
-#                 resp.append_header('Content-Disposition', content_disposition)
-#             resp.status = falcon.HTTP_200
-#         else:
-#             total_records = self.project.get_total_count()
-#             filtered_records = self.project.get_filtered_count(search_value)
-#             projects = self.project.get_prj_paginated(start, length, search_value, order_column, order_dir)
-#
-#             # Формируем ответ для DataTables
-#             resp.media = {
-#                 'draw': req.get_param('draw', default=None),
-#                 'recordsTotal': total_records,
-#                 'recordsFiltered': filtered_records,
-#                 'data': projects
-#             }
-#             resp.status = falcon.HTTP_200
-#
-#     def on_post(self, req, resp):
-#         if 'AddSubmit' in req.media:
-#             raise falcon.HTTPMovedPermanently("/projects/add")
-#         if 'DeleteSubmit' in req.media:
-#             prj_id = req.media.prj_id
-#             self.prj.delete_prj(prj_id)
-#         if 'ViewAssm' in req.media:
-#             prj_id = req.media['prj_id']
-#             raise falcon.HTTPMovedPermanently(f"/projects/{prj_id}/assembly")
-#         resp.text = self.prj.get_prj()
-#         projects = json.loads(resp.text)
-#         proj = []
-#         for prj in projects:
-#             projects[prj]['ss'] = 'odd'
-#             if int(prj) % 2 == 0:
-#                 projects[prj]['ss'] = 'even'
-#             projects[prj]['prj_id'] = prj
-#             proj.append(projects[prj])
-#         resp.status = falcon.HTTP_OK
-#         resp.content_type = 'text/html'
-#         cwd = os.getcwd()  # Get the current working directory (cwd)
-#         files = os.listdir(cwd)  # Get all the files in that directory
-#         fp = open("uro_app/template/index.html", "r")
-#         tempobj = Template(fp.read())
-#         resp.text = tempobj.render({'projects': proj})
-#
-#     """def on_put_student(self, req, resp, id):
-#         pass
-#
-#     def on_delete_student(self, req, resp, id):
-#         pass"""
 
 
 class ProjectResource:
@@ -284,6 +122,7 @@ class ProjectResource:
 
     def on_delete_student(self, req, resp, id):
         pass"""
+
 
 class ProjectDeleteResource:
     pass
@@ -475,40 +314,40 @@ class AssemblyJointResource(object):
         resp.text = tempobj.render({'packages': proj})
 
 
-class AssemblyCompareResource(object):
-    def __init__(self):
-        self.pkg = Package()
-
-    def on_get(self, req, resp, prj_id, assm_id, prev, current):
-        print(11111111111)
-        self.pkg.assm_id = assm_id
-        self.pkg.difference = True
-        if prev == 'is_prev':
-            self.pkg.prev = True
-        else:
-            self.pkg.prev = False
-        if current == 'is_current':
-            self.pkg.current = True
-        else:
-            self.pkg.current = False
-        print(11111111111)
-        packages = self.pkg.get_pkg()
-        proj = []
-        for prj in packages:
-            packages[prj]['ss'] = 'odd'
-            if int(prj) % 2 == 0:
-                packages[prj]['ss'] = 'even'
-            packages[prj]['pkg_vrs_id'] = prj
-            proj.append(packages[prj])
-        print(packages)
-        resp.status = falcon.HTTP_OK
-        resp.content_type = 'text/html'
-        # fp = open("uro_app/template/package.html", "r")
-        # tempobj = Template(fp.read())
-        # resp.text = tempobj.render({'packages': proj})
-
-    def on_post(self):
-        pass
+# class AssemblyCompareResource(object):
+#     def __init__(self):
+#         self.pkg = Package()
+#
+#     def on_get(self, req, resp, prj_id, assm_id, prev, current):
+#         print(11111111111)
+#         self.pkg.assm_id = assm_id
+#         self.pkg.difference = True
+#         if prev == 'is_prev':
+#             self.pkg.prev = True
+#         else:
+#             self.pkg.prev = False
+#         if current == 'is_current':
+#             self.pkg.current = True
+#         else:
+#             self.pkg.current = False
+#         print(11111111111)
+#         packages = self.pkg.get_pkg()
+#         proj = []
+#         for prj in packages:
+#             packages[prj]['ss'] = 'odd'
+#             if int(prj) % 2 == 0:
+#                 packages[prj]['ss'] = 'even'
+#             packages[prj]['pkg_vrs_id'] = prj
+#             proj.append(packages[prj])
+#         print(packages)
+#         resp.status = falcon.HTTP_OK
+#         resp.content_type = 'text/html'
+#         # fp = open("uro_app/template/package.html", "r")
+#         # tempobj = Template(fp.read())
+#         # resp.text = tempobj.render({'packages': proj})
+#
+#     def on_post(self):
+#         pass
 
 
 class PackageResource:
@@ -528,7 +367,8 @@ class PackageResource:
 
         if export_format:
             body, content_type, content_disposition = self.package.export_packages_data(
-                export_format, export_all, assm_id, prj_id, include_joint, start, length, search_value, order_column, order_dir
+                export_format, export_all, assm_id, prj_id, include_joint, start, length, search_value, order_column,
+                order_dir
             )
             if body:
                 resp.body = body
@@ -540,7 +380,8 @@ class PackageResource:
 
         total_records = self.package.get_total_count(assm_id, include_joint)
         filtered_records = self.package.get_filtered_count(assm_id, include_joint, search_value)
-        packages = self.package.get_pkg_paginated(assm_id, include_joint, start, length, search_value, order_column, order_dir)
+        packages = self.package.get_pkg_paginated(assm_id, include_joint, start, length, search_value, order_column,
+                                                  order_dir)
 
         resp.media = {
             'draw': req.get_param('draw', default=None),
@@ -779,75 +620,6 @@ class BDURource:
             resp.status = falcon.HTTP_404
 
 
-# class PackageCVEResource:
-#     def __init__(self):
-#         self.cve = CVE()
-#
-#     def on_get(self, req, resp, prj_id, assm_id, pkg_id):
-#         start = int(req.get_param('start', default=0))
-#         length = int(req.get_param('length', default=10))
-#         search_value = req.get_param('search[value]', default='')
-#
-#         order_column = req.get_param('order_column', default=None)
-#         order_dir = req.get_param('order_dir', default=None)
-#
-#         filters = {
-#             'urgency': self.decode_filter(req.get_param_as_int('urgency'), 'urgency'),
-#             'status': self.decode_filter(req.get_param_as_int('status'), 'status'),
-#             'severity_level': self.decode_filter(req.get_param_as_int('severity_level'), 'severity_level'),
-#             'date_discovered_start': req.get_param('date_discovered_start'),
-#             'date_discovered_end': req.get_param('date_discovered_end'),
-#         }
-#
-#         total_records = self.cve.get_total_count_for_package(pkg_id)
-#         filtered_records = self.cve.get_filtered_count_for_package(search_value, filters, pkg_id)
-#
-#         cve_list = self.cve.get_cve_paginated_for_package(start, length, search_value, order_column, order_dir, filters,
-#                                                           pkg_id)
-#
-#         resp.media = {
-#             'draw': req.get_param('draw', default=None),
-#             'recordsTotal': total_records,
-#             'recordsFiltered': filtered_records,
-#             'data': cve_list
-#         }
-#         resp.status = falcon.HTTP_200
-#
-#     def decode_filter(self, value, filter_type):
-#         if value is None:
-#             return []
-#
-#         mapping = {
-#             'urgency': {
-#                 1 << 0: 'not yet assigned',
-#                 1 << 1: 'unimportant',
-#                 1 << 2: 'low',
-#                 1 << 3: 'medium',
-#                 1 << 4: 'high',
-#                 1 << 5: 'end-of-life',
-#             },
-#             'status': {
-#                 1 << 0: 'resolved',
-#                 1 << 1: 'open',
-#                 1 << 2: 'undetermined',
-#             },
-#             'severity_level': {
-#                 1 << 0: 'undefined',
-#                 1 << 1: 'unknown',
-#                 1 << 2: 'low',
-#                 1 << 3: 'medium',
-#                 1 << 4: 'high',
-#                 1 << 5: 'critical',
-#             },
-#         }
-#
-#         result = []
-#         for bitmask, name in mapping[filter_type].items():
-#             if value & bitmask:
-#                 result.append(name)
-#
-#         return result
-
 class PackageCVEResource:
     def __init__(self):
         self.cve = CVE()
@@ -987,6 +759,7 @@ class PackageCVEResource:
 
         return result
 
+
 class AssemblyCveResource(object):
     def __init__(self):
         self.cve = Vulnerability()
@@ -998,29 +771,6 @@ class AssemblyCveResource(object):
         resp.text = json.dumps(self.cve.get_cve())
         resp.status = falcon.HTTP_OK
         resp.content_type = falcon.MEDIA_JSON
-
-
-# class PackageCveResource(object):
-#     def __init__(self):
-#         self.cve = Vulnerability()
-#
-#     def on_get(self, req, resp, prj_id, assm_id):
-#         cve = Vulnerability()
-#         cve.assm_id = assm_id
-#         cve.resolved = req.get_param('resolved', default=False)
-#         cve.urgency = req.get_param_as_list('urgency')
-#         cve.status = req.get_param_as_list('status')
-#         cve.severity = req.get_param_as_list('severity_level')
-#         # Другие параметры фильтрации
-#
-#         data = cve.get_assm_cve()
-#         resp.media = {
-#             'draw': req.get_param('draw', default=1),
-#             'recordsTotal': len(data),
-#             'recordsFiltered': len(data),
-#             'data': data
-#         }
-#         resp.status = falcon.HTTP_OK
 
 
 class JointCveResource(object):
@@ -1288,3 +1038,99 @@ class StatsResource:
             resp.status = falcon.HTTP_404
 
 
+class RegisterResource:
+    def on_post(self, req, resp):
+        data = req.media
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        admin_code = data.get('admin_code', None)
+
+        if not username or not email or not password:
+            raise falcon.HTTPBadRequest(title="Ошибка", description="Не заполнены все обязательные поля")
+
+        user_model = User()
+        result = user_model.register(username, email, password, admin_code)
+        if not result.get("success"):
+            resp.media = result
+            resp.status = falcon.HTTP_400
+            return
+
+        resp.media = result
+        resp.status = falcon.HTTP_201
+
+
+class LoginResource:
+    def on_post(self, req, resp):
+        data = req.media
+        email = data.get('email')
+        password = data.get('password')
+
+        if not email or not password:
+            raise falcon.HTTPBadRequest(title="Ошибка", description="Не заполнены все поля")
+
+        user_model = User()
+        user = user_model.get_by_email(email)
+        if not user:
+            resp.media = {"success": False, "message": "Неверный email или пароль"}
+            resp.status = falcon.HTTP_400
+            return
+
+        stored_hash = user.get("password_hash")
+        if not bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+            resp.media = {"success": False, "message": "Неверный email или пароль"}
+            resp.status = falcon.HTTP_400
+            return
+
+        resp.media = {"success": True, "user": {"username": user.get("username"), "role": user.get("role")}}
+        resp.status = falcon.HTTP_200
+
+
+class AssemblyCompareResource:
+    def __init__(self):
+        self.compare_model = AssemblyCompare()
+
+    def on_get(self, req, resp, prj_id, assm_id, previous_assm_id):
+        start = int(req.get_param('start', default=0))
+        length = int(req.get_param('length', default=10))
+        search_value = req.get_param('search[value]', default='')
+        order_column = req.get_param('order_column', default=None)
+        order_dir = req.get_param('order_dir', default=None)
+
+        include_joint_current = req.get_param_as_bool('include_joint_current', default=False)
+        include_joint_previous = req.get_param_as_bool('include_joint_previous', default=False)
+        state_filter = req.get_param('compare_state_filter', default=None)
+
+        data = self.compare_model.get_comparison_paginated(
+            assm_id, previous_assm_id,
+            include_joint_current, include_joint_previous,
+            search_value, state_filter, order_column, order_dir, start, length
+        )
+
+        total = self.compare_model.get_total_count(assm_id, previous_assm_id,
+                                                   include_joint_current, include_joint_previous)
+        filtered = self.compare_model.get_filtered_count(assm_id, previous_assm_id,
+                                                         include_joint_current, include_joint_previous,
+                                                         search_value, state_filter)
+        resp.media = {
+            "draw": req.get_param('draw', default=None),
+            "recordsTotal": total,
+            "recordsFiltered": filtered,
+            "data": data
+        }
+        resp.status = falcon.HTTP_200
+
+
+# resources.py
+class OlderAssembliesResource:
+    def __init__(self):
+        self.olderAssemblies = OlderAssemblies()
+
+    def on_get(self, req, resp, prj_id, assm_id):
+        data = self.olderAssemblies.get_older_assemblies(prj_id, assm_id)
+        if data is not None:
+            resp.media = data
+            resp.status = falcon.HTTP_200
+        else:
+            resp.media = {'error': f'No assemblies found for project {prj_id} older than assembly {assm_id}'}
+            resp.status = falcon.HTTP_404

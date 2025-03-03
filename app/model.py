@@ -5,6 +5,7 @@ from datetime import datetime
 import io
 import csv
 import openpyxl
+import bcrypt
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
@@ -15,7 +16,7 @@ from api.query_commands.changelog_query import ChangelogApi
 from api.query_commands.cve_query import CveApi
 from api.query_commands.package_query import PackageApi
 from api.query_commands.project_query import ProjectApi
-from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB
+from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB, SECRET_ADMIN_CODE
 from connection import DbHelper
 
 
@@ -159,21 +160,6 @@ class Project(Base):
         columns_with_hits = [row[0] for row in result]
         return columns_with_hits
 
-    # def get_filtered_count(self, search_value):
-    #     query = """
-    #         SELECT COUNT(*)
-    #         FROM repositories.project p
-    #         LEFT JOIN repositories.architecture a ON p.arch_id = a.arch_id
-    #         WHERE
-    #             p.prj_name ILIKE %s OR
-    #             p.prj_desc ILIKE %s OR
-    #             p.vendor ILIKE %s OR
-    #             a.arch_name ILIKE %s
-    #     """
-    #     params = [f'%{search_value}%'] * 4
-    #     result = self.db_helper.execute_query(query, params)
-    #     return result[0][0]
-
     def get_filtered_count(self, search_value):
         params = []
         if search_value:
@@ -208,62 +194,6 @@ class Project(Base):
         print(query, params)
         result = self.db_helper.execute_query(query, params)
         return result[0][0]
-
-    # def get_prj_paginated(self, start, length, search_value, order_column, order_dir):
-    #     query = """
-    #         SELECT
-    #             p.prj_id, p.prj_name, p.prj_desc, p.vendor, a.arch_name
-    #         FROM
-    #             repositories.project p
-    #         LEFT JOIN
-    #             repositories.architecture a ON p.arch_id = a.arch_id
-    #     """
-    #     params = []
-    #     if search_value:
-    #         query += """
-    #             WHERE p.prj_name ILIKE %s OR p.prj_desc ILIKE %s OR p.vendor ILIKE %s OR a.arch_name ILIKE %s
-    #         """
-    #         params.extend([f'%{search_value}%'] * 4)
-    #
-    #     # columns = ['p.prj_id', 'p.prj_name', 'p.prj_desc', 'p.vendor', 'a.arch_name']
-    #     # if order_column is not None and order_dir is not None:
-    #     #     query += f" ORDER BY {columns[int(order_column)]} {order_dir.upper()}"
-    #
-    #     # Сопоставление имён полей данных с именами столбцов в базе данных
-    #     orderable_columns = {
-    #         'prj_id': 'p.prj_id',
-    #         'prj_name': 'p.prj_name',
-    #         'prj_desc': 'p.prj_desc',
-    #         'vendor': 'p.vendor',
-    #         'arch_name': 'a.arch_name',
-    #     }
-    #
-    #     if order_column and order_dir:
-    #         sql_order_column = orderable_columns.get(order_column,
-    #                                                  'p.prj_name')  # По умолчанию сортировка по названию проекта
-    #         sql_order_dir = 'ASC' if order_dir.lower() == 'asc' else 'DESC'
-    #         query += f" ORDER BY {sql_order_column} {sql_order_dir}"
-    #     else:
-    #         query += " ORDER BY p.prj_name ASC"
-    #
-    #     query += " LIMIT %s OFFSET %s"
-    #     params.extend([length, start])
-    #
-    #     result = self.db_helper.execute_query(query, params)
-    #     if result:
-    #         projects = [
-    #             {
-    #                 'prj_id': row[0],
-    #                 'prj_name': row[1],
-    #                 'prj_desc': row[2],
-    #                 'vendor': row[3],
-    #                 'arch_name': row[4]
-    #             }
-    #             for row in result
-    #         ]
-    #         return projects
-    #     else:
-    #         return []
 
     def get_prj_paginated(self, start, length, search_value, order_column, order_dir):
         query = """
@@ -515,18 +445,6 @@ class Assembly(Base):
         result = self.db_helper.execute_query(query, (prj_id,))
         return result[0][0]
 
-    # def get_filtered_count(self, prj_id, search_value):
-    #     query = """
-    #         SELECT COUNT(*)
-    #         FROM repositories.assembly
-    #         WHERE
-    #             prj_id = %s AND
-    #             (assm_desc ILIKE %s OR assm_version ILIKE %s OR assm_date_created::text ILIKE %s)
-    #     """
-    #     params = [prj_id] + [f'%{search_value}%'] * 3
-    #     result = self.db_helper.execute_query(query, params)
-    #     return result[0][0]
-
     def get_filtered_count(self, prj_id, search_value):
         self.prj_id = prj_id  # Сохраняем prj_id для использования в методе check_columns_for_search_value
         params = [prj_id]
@@ -558,57 +476,6 @@ class Assembly(Base):
 
         result = self.db_helper.execute_query(query, params)
         return result[0][0]
-
-    # def get_assm_paginated(self, prj_id, start, length, search_value, order_column, order_dir):
-    #     query = """
-    #         SELECT assm_id, assm_version, assm_desc, assm_date_created
-    #         FROM repositories.assembly
-    #         WHERE prj_id = %s
-    #     """
-    #     params = [prj_id]
-    #     if search_value:
-    #         query += """
-    #             AND (assm_desc ILIKE %s OR assm_version ILIKE %s OR assm_date_created::text ILIKE %s)
-    #         """
-    #         params.extend([f'%{search_value}%'] * 3)
-    #
-    #     # columns = ['assm_id', 'assm_version', 'assm_desc', 'assm_date_created']
-    #     # if order_column is not None and order_dir is not None:
-    #     #     query += f" ORDER BY {columns[int(order_column)]} {order_dir.upper()}"
-    #
-    #     orderable_columns = {
-    #         'assm_id': 'assm_id',
-    #         'assm_version': 'assm_version',
-    #         'assm_desc': 'assm_desc',
-    #         'assm_date_created': 'assm_date_created',
-    #     }
-    #
-    #     if order_column and order_dir:
-    #         sql_order_column = orderable_columns.get(order_column,
-    #                                                  'assm_date_created')  # По умолчанию сортировка по дате создания
-    #         sql_order_dir = 'ASC' if order_dir.lower() == 'asc' else 'DESC'
-    #         query += f" ORDER BY {sql_order_column} {sql_order_dir}"
-    #     else:
-    #         query += " ORDER BY assm_date_created ASC"
-    #
-    #     query += " LIMIT %s OFFSET %s"
-    #     params.extend([length, start])
-    #
-    #     result = self.db_helper.execute_query(query, params)
-    #     if result:
-    #         assemblies = [
-    #             {
-    #                 'assm_id': row[0],
-    #                 'assm_version': row[1],
-    #                 'assm_desc': row[2],
-    #                 'assm_date_created': self.format_date(row[3])
-    #                 # 'assm_date_created': row[3].isoformat() if row[3] else None
-    #             }
-    #             for row in result
-    #         ]
-    #         return assemblies
-    #     else:
-    #         return []
 
     def get_assm_paginated(self, prj_id, start, length, search_value, order_column, order_dir):
         self.prj_id = prj_id  # Сохраняем prj_id для использования в методе check_columns_for_search_value
@@ -785,42 +652,6 @@ class Package(Base):
         result = self.db_helper.execute_query(query, params)
         return result[0][0] if result else 0
 
-    # def get_filtered_count(self, assm_id, include_joint, search_value):
-    #     query = """
-    #     SELECT COUNT(*)
-    #     FROM (
-    #         SELECT pvf.pvid AS id, pvf.assm_id AS assemblyId
-    #         FROM (
-    #             SELECT an.assm_id,
-    #                    pv.pkg_id,
-    #                    pv.pkg_vrs_id as pvid,
-    #                    ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) as rn
-    #             FROM repositories.assembly ca
-    #             JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-    #             JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-    #             JOIN repositories.pkg_version pv on pv.pkg_vrs_id = an.pkg_vrs_id
-    #             WHERE ca.assm_id = %(assm_id)s
-    #                   AND (a.assm_id = ca.assm_id OR (%(include_joint)s AND a.assm_date_created < ca.assm_date_created))
-    #         ) as pvf
-    #         JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
-    #         JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-    #         WHERE pvf.rn = 1
-    #           AND (%(search_value)s IS NULL
-    #                OR v.version LIKE %(search_pattern)s
-    #                OR v.author_name LIKE %(search_pattern)s
-    #                OR p.pkg_name LIKE %(search_pattern)s)
-    #     ) AS subquery;
-    #     """
-    #     if search_value:
-    #         search_pattern = f"%{search_value}%"
-    #         params = {'assm_id': assm_id, 'include_joint': include_joint, 'search_value': search_value,
-    #                   'search_pattern': search_pattern}
-    #     else:
-    #         params = {'assm_id': assm_id, 'include_joint': include_joint, 'search_value': None, 'search_pattern': None}
-    #
-    #     result = self.db_helper.execute_query(query, params)
-    #     return result[0][0] if result else 0
-
     def get_filtered_count(self, assm_id, include_joint, search_value):
         params = {'assm_id': assm_id, 'include_joint': include_joint}
 
@@ -872,84 +703,6 @@ class Package(Base):
         print(query, params)
         result = self.db_helper.execute_query(query, params)
         return result[0][0] if result else 0
-
-    # def get_pkg_paginated(self, assm_id, include_joint, start, length, search_value, order_column, order_dir):
-    #     query = """
-    #     SELECT pvf.pvid AS id, pvf.assm_id AS assemblyId,
-    #            a.assm_date_created AS assemblyTime,
-    #            a.assm_desc AS assemblyDescription,
-    #            p.pkg_id AS packageId,
-    #            p.pkg_name AS package,
-    #            v.version,
-    #            v.pkg_date_created AS time,
-    #            v.author_name AS maintainer
-    #     FROM (
-    #         SELECT an.assm_id,
-    #                pv.pkg_id,
-    #                pv.pkg_vrs_id as pvid,
-    #                ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) as rn
-    #         FROM repositories.assembly ca
-    #         JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-    #         JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-    #         JOIN repositories.pkg_version pv on pv.pkg_vrs_id = an.pkg_vrs_id
-    #         WHERE ca.assm_id = %(assm_id)s
-    #               AND (a.assm_id = ca.assm_id OR (%(include_joint)s AND a.assm_date_created < ca.assm_date_created))
-    #     ) as pvf
-    #     JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
-    #     JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-    #     JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
-    #     WHERE pvf.rn = 1
-    #       AND (%(search_value)s IS NULL
-    #            OR v.version LIKE %(search_pattern)s
-    #            OR v.author_name LIKE %(search_pattern)s
-    #            OR p.pkg_name LIKE %(search_pattern)s)
-    #     """
-    #     if search_value:
-    #         search_pattern = f"%{search_value}%"
-    #         params = {'assm_id': assm_id, 'include_joint': include_joint, 'search_value': search_value,
-    #                   'search_pattern': search_pattern}
-    #     else:
-    #         params = {'assm_id': assm_id, 'include_joint': include_joint, 'search_value': None, 'search_pattern': None}
-    #
-    #     orderable_columns = {
-    #         'pkg_vrs_id': 'pvf.pvid',
-    #         'pkg_name': 'p.pkg_name',
-    #         'version': 'v.version',
-    #         'author_name': 'v.author_name',
-    #         'pkg_date_created': 'v.pkg_date_created',
-    #         'assm_date_created': 'a.assm_date_created',
-    #         'assm_desc': 'a.assm_desc',
-    #     }
-    #
-    #     if order_column and order_dir:
-    #         sql_order_column = orderable_columns.get(order_column, 'p.pkg_name')  # По умолчанию сортировка по pkg_name
-    #         query += f" ORDER BY {sql_order_column} {order_dir.upper()}"
-    #     else:
-    #         query += " ORDER BY p.pkg_name"
-    #
-    #     query += " LIMIT %(length)s OFFSET %(start)s"
-    #     params['length'] = length
-    #     params['start'] = start
-    #
-    #     result = self.db_helper.execute_query(query, params)
-    #     if result:
-    #         packages = [
-    #             {
-    #                 'pkg_vrs_id': row[0],
-    #                 'assm_id': row[1],
-    #                 'assm_date_created': self.format_date(row[2]),
-    #                 'assm_desc': row[3],
-    #                 'pkg_id': row[4],
-    #                 'pkg_name': row[5],
-    #                 'version': row[6],
-    #                 'pkg_date_created': self.format_date(row[7]),
-    #                 'author_name': row[8],
-    #             }
-    #             for row in result
-    #         ]
-    #         return packages
-    #     else:
-    #         return []
 
     def get_pkg_paginated(self, assm_id, include_joint, start, length, search_value, order_column, order_dir):
         params = {'assm_id': assm_id, 'include_joint': include_joint}
@@ -1198,400 +951,6 @@ class Package(Base):
             return output.getvalue(), 'text/html', None
 
         return None, None, None
-
-# class CVE(Base):
-#     def __init__(self):
-#         super().__init__()
-#
-#     def get_cve_links(self, cve_name):
-#         query = """
-#                SELECT source_name, template
-#                FROM maintenance.link_templates
-#            """
-#         result = self.db_helper.execute_query(query)
-#         if result:
-#             links = []
-#             for row in result:
-#                 source_name = row[0]
-#                 template = row[1]
-#                 url = template.replace('{cve}', cve_name)
-#                 links.append({'source_name': source_name, 'url': url})
-#             return links
-#         else:
-#             return []
-#
-#     def check_columns_for_search_value(self, search_value):
-#         search_pattern = f"%{search_value}%"
-#         columns_to_check = [
-#             {
-#                 'col_name': 'cve_name',
-#                 'table_name': 'debtracker.cve',
-#                 'column_name': 'cve_name',
-#                 'alias': 'c'
-#             },
-#             {
-#                 'col_name': 'pkg_name',
-#                 'table_name': 'debtracker.package',
-#                 'column_name': 'pkg_name',
-#                 'alias': 'p'
-#             }
-#         ]
-#
-#         with_clauses = []
-#         params = []
-#         for idx, col in enumerate(columns_to_check):
-#             with_clause = f"""
-#             t{idx} AS (
-#                 SELECT '{col['col_name']}' AS col_name
-#                 FROM {col['table_name']} {col['alias']}
-#                 WHERE {col['alias']}.{col['column_name']} ILIKE %s
-#                 LIMIT 1
-#             )
-#             """
-#             with_clauses.append(with_clause)
-#             params.append(search_pattern)
-#
-#         with_clause_sql = ',\n'.join(with_clauses)
-#         union_selects = '\nUNION ALL\n'.join([f"SELECT col_name FROM t{idx}" for idx in range(len(columns_to_check))])
-#
-#         query = f"""
-#         WITH
-#         {with_clause_sql}
-#         SELECT col_name FROM (
-#             {union_selects}
-#         ) AS subquery
-#         """
-#
-#         result = self.db_helper.execute_query(query, params)
-#         columns_with_hits = [row[0] for row in result]
-#         return columns_with_hits
-#
-#     def get_total_count(self):
-#         query = """
-#         SELECT COUNT(*)
-#         FROM debtracker.cve c
-#         JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
-#         LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
-#         LEFT JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.package p ON pv.pkg_id = p.pkg_id
-#         LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
-#         LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
-#         LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
-#         """
-#         result = self.db_helper.execute_query(query)
-#         return result[0][0] if result else 0
-#
-#     def get_filtered_count(self, search_value, filters):
-#         where_clauses = []
-#         params = []
-#
-#         if search_value:
-#             # Используем метод check_columns_for_search_value
-#             columns_with_hits = self.check_columns_for_search_value(search_value)
-#             if not columns_with_hits:
-#                 # Если совпадений нет ни в одном столбце, возвращаем 0
-#                 return 0
-#             else:
-#                 # Формируем условия поиска только по столбцам с совпадениями
-#                 search_conditions = []
-#                 search_pattern = f"%{search_value}%"
-#                 for column in columns_with_hits:
-#                     if column == 'cve_name':
-#                         search_conditions.append("c.cve_name ILIKE %s")
-#                     elif column == 'pkg_name':
-#                         search_conditions.append("p.pkg_name ILIKE %s")
-#                     params.append(search_pattern)
-#                 where_clauses.append("(" + " OR ".join(search_conditions) + ")")
-#
-#         # Добавляем фильтры
-#         if filters.get('urgency'):
-#             urgency_placeholders = ','.join(['%s'] * len(filters['urgency']))
-#             where_clauses.append(f"u.urg_name IN ({urgency_placeholders})")
-#             params.extend(filters['urgency'])
-#
-#         if filters.get('status'):
-#             status_placeholders = ','.join(['%s'] * len(filters['status']))
-#             where_clauses.append(f"s.st_name IN ({status_placeholders})")
-#             params.extend(filters['status'])
-#
-#         if filters.get('severity_level'):
-#             severity_placeholders = ','.join(['%s'] * len(filters['severity_level']))
-#             where_clauses.append(f"v.severity_level IN ({severity_placeholders})")
-#             params.extend(filters['severity_level'])
-#
-#         if filters.get('date_discovered_start'):
-#             where_clauses.append("v.date_discovered >= %s")
-#             params.append(filters['date_discovered_start'])
-#
-#         if filters.get('date_discovered_end'):
-#             where_clauses.append("v.date_discovered <= %s")
-#             params.append(filters['date_discovered_end'])
-#
-#         where_clause = ' AND '.join(where_clauses)
-#         if where_clause:
-#             where_clause = 'WHERE ' + where_clause
-#
-#         query = f"""
-#         SELECT COUNT(*)
-#         FROM debtracker.cve c
-#         JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
-#         LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
-#         LEFT JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.package p ON pv.pkg_id = p.pkg_id
-#         LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
-#         LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
-#         LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
-#         {where_clause}
-#         """
-#
-#         result = self.db_helper.execute_query(query, params)
-#         return result[0][0] if result else 0
-#
-#     def get_cve_paginated(self, start, length, search_value, order_column, order_dir, filters):
-#         where_clauses = []
-#         params = []
-#
-#         if search_value:
-#             # Используем метод check_columns_for_search_value
-#             columns_with_hits = self.check_columns_for_search_value(search_value)
-#             if not columns_with_hits:
-#                 # Если совпадений нет ни в одном столбце, возвращаем пустой список
-#                 return []
-#             else:
-#                 # Формируем условия поиска только по столбцам с совпадениями
-#                 search_conditions = []
-#                 search_pattern = f"%{search_value}%"
-#                 for column in columns_with_hits:
-#                     if column == 'cve_name':
-#                         search_conditions.append("c.cve_name ILIKE %s")
-#                     elif column == 'pkg_name':
-#                         search_conditions.append("p.pkg_name ILIKE %s")
-#                     params.append(search_pattern)
-#                 where_clauses.append("(" + " OR ".join(search_conditions) + ")")
-#
-#         # Добавляем фильтры
-#         if filters.get('urgency'):
-#             urgency_placeholders = ','.join(['%s'] * len(filters['urgency']))
-#             where_clauses.append(f"u.urg_name IN ({urgency_placeholders})")
-#             params.extend(filters['urgency'])
-#
-#         if filters.get('status'):
-#             status_placeholders = ','.join(['%s'] * len(filters['status']))
-#             where_clauses.append(f"s.st_name IN ({status_placeholders})")
-#             params.extend(filters['status'])
-#
-#         if filters.get('severity_level'):
-#             severity_placeholders = ','.join(['%s'] * len(filters['severity_level']))
-#             where_clauses.append(f"v.severity_level IN ({severity_placeholders})")
-#             params.extend(filters['severity_level'])
-#
-#         if filters.get('date_discovered_start'):
-#             where_clauses.append("v.date_discovered >= %s")
-#             params.append(filters['date_discovered_start'])
-#
-#         if filters.get('date_discovered_end'):
-#             where_clauses.append("v.date_discovered <= %s")
-#             params.append(filters['date_discovered_end'])
-#
-#         where_clause = ' AND '.join(where_clauses)
-#         if where_clause:
-#             where_clause = 'WHERE ' + where_clause
-#
-#         # Определение сортировки
-#         valid_order_columns = {
-#             'cve_name': 'c.cve_name',
-#             'pkg_name': 'p.pkg_name',
-#             'rep_name': 'r.rep_name',
-#             'st_name': 's.st_name',
-#             'urg_name': 'u.urg_name',
-#             'date_discovered': 'v.date_discovered'
-#         }
-#         order_column_sql = valid_order_columns.get(order_column, 'c.cve_name')
-#         order_dir_sql = 'ASC' if order_dir and order_dir.lower() == 'asc' else 'DESC'
-#
-#         order_clause = f"ORDER BY {order_column_sql} {order_dir_sql}"
-#
-#         limit_clause = "LIMIT %s OFFSET %s"
-#         params.extend([length, start])
-#
-#         query = f"""
-#         SELECT c.cve_name, p.pkg_name, r.rep_name, s.st_name, u.urg_name, v.date_discovered, c.cve_desc, v.severity_level
-#         FROM debtracker.cve c
-#         JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
-#         LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
-#         LEFT JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.package p ON pv.pkg_id = p.pkg_id
-#         LEFT JOIN debtracker.repository r ON cr.rep_id = r.rep_id
-#         LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
-#         LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
-#         LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
-#         {where_clause}
-#         {order_clause}
-#         {limit_clause}
-#         """
-#
-#         result = self.db_helper.execute_query(query, params)
-#         if result:
-#             data = [
-#                 {
-#                     'cve_name': row[0],
-#                     'pkg_name': row[1],
-#                     'rep_name': row[2],
-#                     'st_name': row[3],
-#                     'urg_name': row[4],
-#                     'date_discovered': row[5].strftime('%Y-%m-%d') if row[5] else 'Unknown',
-#                     'cve_desc': row[6],
-#                     'severity_level': row[7],
-#                 }
-#                 for row in result
-#             ]
-#             return data
-#         else:
-#             return []
-#
-#     def get_total_count_for_package(self, pkg_id):
-#         query = """
-#         SELECT COUNT(*)
-#         FROM debtracker.cve c
-#         LEFT JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         LEFT JOIN debtracker.pkg_version pv ON cr.pkg_repository_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.package p ON pv.pkg_id = p.pkg_id
-#         WHERE p.pkg_id = %s
-#         """
-#         result = self.db_helper.execute_query(query, [pkg_id])
-#         return result[0][0] if result else 0
-#
-#     def get_filtered_count_for_package(self, search_value, filters, pkg_id):
-#         where_clauses = ["pv.pkg_id = %s"]
-#         params = [pkg_id]
-#
-#         if search_value:
-#             where_clauses.append("(c.cve_name ILIKE %s)")
-#             params.append('%' + search_value + '%')
-#
-#         if filters.get('urgency'):
-#             urgency_placeholders = ','.join(['%s'] * len(filters['urgency']))
-#             where_clauses.append(f"u.urg_name IN ({urgency_placeholders})")
-#             params.extend(filters['urgency'])
-#
-#         if filters.get('status'):
-#             status_placeholders = ','.join(['%s'] * len(filters['status']))
-#             where_clauses.append(f"s.st_name IN ({status_placeholders})")
-#             params.extend(filters['status'])
-#
-#         if filters.get('severity_level'):
-#             severity_placeholders = ','.join(['%s'] * len(filters['severity_level']))
-#             where_clauses.append(f"v.severity_level IN ({severity_placeholders})")
-#             params.extend(filters['severity_level'])
-#
-#         if filters.get('date_discovered_start'):
-#             where_clauses.append("v.date_discovered >= %s")
-#             params.append(filters['date_discovered_start'])
-#
-#         if filters.get('date_discovered_end'):
-#             where_clauses.append("v.date_discovered <= %s")
-#             params.append(filters['date_discovered_end'])
-#
-#         where_clause = ' AND '.join(where_clauses)
-#
-#         query = f"""
-#         SELECT COUNT(*)
-#         FROM debtracker.cve c
-#         JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
-#         LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
-#         LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
-#         LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
-#         LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
-#         WHERE {where_clause}
-#         """
-#         result = self.db_helper.execute_query(query, params)
-#         return result[0][0] if result else 0
-#
-#     def get_cve_paginated_for_package(self, start, length, search_value, order_column, order_dir, filters, pkg_id):
-#         where_clauses = ["pv.pkg_id = %s"]
-#         params = [pkg_id]
-#
-#         if search_value:
-#             where_clauses.append("(c.cve_name ILIKE %s OR p.pkg_name ILIKE %s)")
-#             params.append('%' + search_value + '%')
-#
-#         if filters.get('urgency'):
-#             urgency_placeholders = ','.join(['%s'] * len(filters['urgency']))
-#             where_clauses.append(f"u.urg_name IN ({urgency_placeholders})")
-#             params.extend(filters['urgency'])
-#
-#         if filters.get('status'):
-#             status_placeholders = ','.join(['%s'] * len(filters['status']))
-#             where_clauses.append(f"s.st_name IN ({status_placeholders})")
-#             params.extend(filters['status'])
-#
-#         if filters.get('severity_level'):
-#             severity_placeholders = ','.join(['%s'] * len(filters['severity_level']))
-#             where_clauses.append(f"v.severity_level IN ({severity_placeholders})")
-#             params.extend(filters['severity_level'])
-#
-#         if filters.get('date_discovered_start'):
-#             where_clauses.append("v.date_discovered >= %s")
-#             params.append(filters['date_discovered_start'])
-#
-#         if filters.get('date_discovered_end'):
-#             where_clauses.append("v.date_discovered <= %s")
-#             params.append(filters['date_discovered_end'])
-#
-#         where_clause = ' AND '.join(where_clauses)
-#
-#         valid_order_columns = {
-#             'cve_name': 'c.cve_name',
-#             'st_name': 's.st_name',
-#             'urg_name': 'u.urg_name',
-#             'severity_level': 'v.severity_level',
-#             'date_discovered': 'v.date_discovered'
-#         }
-#         order_column_sql = valid_order_columns.get(order_column, 'c.cve_name')
-#         order_dir_sql = 'ASC' if order_dir and order_dir.lower() == 'asc' else 'DESC'
-#
-#         order_clause = f"ORDER BY {order_column_sql} {order_dir_sql}"
-#
-#         limit_clause = "LIMIT %s OFFSET %s"
-#         params.extend([length, start])
-#
-#         query = f"""
-#         SELECT c.cve_name, s.st_name, u.urg_name, v.severity_level, v.date_discovered, c.cve_desc
-#         FROM debtracker.cve c
-#         JOIN debtracker.cve_rep cr ON c.cve_id = cr.cve_id
-#         JOIN debtracker.pkg_version pv ON cr.fixed_pkg_vrs_id = pv.pkg_vrs_id
-#         LEFT JOIN debtracker.urgency u ON cr.urg_id = u.urg_id
-#         LEFT JOIN debtracker.status s ON cr.st_id = s.st_id
-#         LEFT JOIN bdu.identifier i ON i.ident_name = c.cve_name
-#         LEFT JOIN bdu.vul_ident vi ON vi.ident_id = i.ident_id
-#         LEFT JOIN bdu.vulnerability v ON v.vul_id = vi.vul_id
-#         WHERE {where_clause}
-#         {order_clause}
-#         {limit_clause}
-#         """
-#
-#         print(query, params)
-#         result = self.db_helper.execute_query(query, params)
-#         if result:
-#             data = [
-#                 {
-#                     'cve_name': row[0],
-#                     'st_name': row[1],
-#                     'urg_name': row[2],
-#                     'severity_level': row[3],
-#                     'date_discovered': row[4].strftime('%Y-%m-%d') if row[4] else 'Unknown',
-#                     'cve_desc': row[5],
-#                 }
-#                 for row in result
-#             ]
-#             return data
-#         else:
-#             return []
 
 class CVE(Base):
     def __init__(self):
@@ -2342,3 +1701,363 @@ class Stats(Base):
             }
         else:
             return None
+
+
+class User(Base):
+    def register(self, username, email, password, admin_code=None):
+        # Проверка существования пользователя с таким email
+        query = "SELECT id FROM auth.users WHERE email = %s"
+        result = self.db_helper.execute_query(query, (email,))
+        if result:
+            return {"success": False, "message": "Пользователь с таким email уже существует"}
+
+        # Хеширование пароля
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        # Если введён admin_code и он совпадает, выдаем роль admin, иначе role user
+        role = "admin" if admin_code and admin_code == SECRET_ADMIN_CODE else "user"
+
+        insert_query = """
+            INSERT INTO auth.users (username, email, password_hash, role)
+            VALUES (%s, %s, %s, %s)
+        """
+        self.db_helper.execute_query(insert_query, (username, email, hashed.decode('utf-8'), role))
+        self.db_helper.commit_conn()
+        return {"success": True, "user": {"username": username, "role": role}}
+
+    def get_by_email(self, email):
+        query = "SELECT id, username, password_hash, role FROM auth.users WHERE email = %s"
+        result = self.db_helper.execute_query(query, (email,))
+        if result:
+            return {
+                "id": result[0][0],
+                "username": result[0][1],
+                "password_hash": result[0][2],
+                "role": result[0][3]
+            }
+        return None
+
+
+class AssemblyCompare(Base):
+    def get_comparison_paginated(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous,
+                                 search_value, state_filter, order_column, order_dir, start, length):
+        # Рабочий базовый запрос без ORDER BY и LIMIT/OFFSET
+        base_sql = f"""
+                    WITH curr AS (
+                      SELECT p.pkg_name,
+                             a.assm_id AS current_assm,
+                             a.assm_desc AS current_desc,
+                             v.version AS current_version,
+                             v.pkg_date_created AS current_time
+                      FROM (
+                          SELECT an.assm_id,
+                                 pv.pkg_id,
+                                 pv.pkg_vrs_id AS pvid,
+                                 ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                          FROM repositories.assembly ca
+                          JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                          JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                          JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                          WHERE ca.assm_id = %s
+                                AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                      ) AS pvf
+                      JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+                      JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                      JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
+                      WHERE pvf.rn = 1
+                    ),
+                    prev AS (
+                      SELECT p.pkg_name,
+                             a.assm_id AS previous_assm,
+                             a.assm_desc AS previous_desc,
+                             v.version AS previous_version,
+                             v.pkg_date_created AS previous_time
+                      FROM (
+                          SELECT an.assm_id,
+                                 pv.pkg_id,
+                                 pv.pkg_vrs_id AS pvid,
+                                 ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                          FROM repositories.assembly ca
+                          JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                          JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                          JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                          WHERE ca.assm_id = %s
+                                AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                      ) AS pvf
+                      JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+                      JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                      JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
+                      WHERE pvf.rn = 1
+                    )
+                    SELECT
+                      COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
+                      CASE 
+                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
+                        WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
+                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
+                            CASE 
+                                WHEN apt_version_compare(curr.current_version, prev.previous_version) > 0 THEN 3
+                                WHEN apt_version_compare(curr.current_version, prev.previous_version) < 0 THEN 4
+                                ELSE 5
+                            END
+                        ELSE 5
+                      END AS state,
+                      prev.previous_assm,
+                      prev.previous_desc,
+                      prev.previous_version,
+                      prev.previous_time,
+                      curr.current_assm,
+                      curr.current_desc,
+                      curr.current_version,
+                      curr.current_time
+                    FROM curr
+                    FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+                """
+        # Оборачиваем в подзапрос
+        sql = f"SELECT * FROM ({base_sql}) AS sub"
+        # Формируем список параметров в том порядке, как они используются:
+        params = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
+        conditions = []
+
+        # Добавляем условие поиска, если search_value не пустой
+        if search_value:
+            search_clause = " (sub.pkg_name ILIKE %s OR " \
+                            "COALESCE(sub.current_desc, '') ILIKE %s OR " \
+                            "COALESCE(sub.current_version, '') ILIKE %s OR " \
+                            "COALESCE(sub.previous_desc, '') ILIKE %s OR " \
+                            "COALESCE(sub.previous_version, '') ILIKE %s)"
+            conditions.append(search_clause)
+            sp = f"%{search_value}%"
+            params.extend([sp] * 5)
+        if state_filter:
+            state_values = [s.strip() for s in state_filter.split(',') if s.strip().isdigit()]
+            if state_values:
+                placeholders = ','.join(['%s'] * len(state_values))
+                conditions.append(f"sub.state IN ({placeholders})")
+                params.extend(state_values)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        # Определяем динамический ORDER BY:
+        orderable_columns = {
+            "pkg_name": "sub.pkg_name",
+            "state": "sub.state",
+            "previous_assm": "sub.previous_assm",
+            "previous_desc": "sub.previous_desc",
+            "previous_version": "sub.previous_version",
+            "previous_time": "sub.previous_time",
+            "current_assm": "sub.current_assm",
+            "current_desc": "sub.current_desc",
+            "current_version": "sub.current_version",
+            "current_time": "sub.current_time"
+        }
+        if order_column and order_dir:
+            order_by = f" ORDER BY {orderable_columns.get(order_column, 'sub.pkg_name')} {order_dir.upper()}"
+        else:
+            order_by = " ORDER BY sub.pkg_name ASC"
+        sql += order_by
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([length, start])
+
+        print("Final Query:", sql, params)
+        result = self.db_helper.execute_query(sql, params)
+        data = []
+        if result:
+            for row in result:
+                data.append({
+                    "pkg_name": row[0],
+                    "state": row[1],
+                    "previous_assm": row[2],
+                    "previous_desc": row[3],
+                    "previous_version": row[4],
+                    "previous_time": row[5].strftime('%Y-%m-%d %H:%M:%S') if row[5] else "",
+                    "current_assm": row[6],
+                    "current_desc": row[7],
+                    "current_version": row[8],
+                    "current_time": row[9].strftime('%Y-%m-%d %H:%M:%S') if row[9] else ""
+                })
+        return data
+
+    def get_total_count(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous):
+        sql = f"""
+        WITH curr AS (
+          SELECT p.pkg_name
+          FROM (
+              SELECT an.assm_id,
+                     pv.pkg_id,
+                     pv.pkg_vrs_id AS pvid,
+                     ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+              FROM repositories.assembly ca
+              JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+              JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+              JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+              WHERE ca.assm_id = %s
+                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+          ) AS pvf
+          JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+          WHERE pvf.rn = 1
+        ),
+        prev AS (
+          SELECT p.pkg_name
+          FROM (
+              SELECT an.assm_id,
+                     pv.pkg_id,
+                     pv.pkg_vrs_id AS pvid,
+                     ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+              FROM repositories.assembly ca
+              JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+              JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+              JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+              WHERE ca.assm_id = %s
+                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+          ) AS pvf
+          JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+          WHERE pvf.rn = 1
+        ),
+        combined AS (
+          SELECT COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name
+          FROM curr
+          FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+        )
+        SELECT COUNT(*) FROM combined;
+        """
+        params = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
+        result = self.db_helper.execute_query(sql, params)
+        return result[0][0] if result else 0
+
+    def get_filtered_count(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous,
+                           search_value, state_filter):
+        # Основной запрос без ORDER BY и LIMIT/OFFSET:
+        base_sql = """
+            WITH curr AS (
+              SELECT p.pkg_name,
+                     a.assm_id AS current_assm,
+                     a.assm_desc AS current_desc,
+                     v.version AS current_version,
+                     v.pkg_date_created AS current_time
+              FROM (
+                  SELECT an.assm_id,
+                         pv.pkg_id,
+                         pv.pkg_vrs_id AS pvid,
+                         ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                  FROM repositories.assembly ca
+                  JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                  JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                  JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                  WHERE ca.assm_id = %s
+                        AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+              ) AS pvf
+              JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+              JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+              JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
+              WHERE pvf.rn = 1
+            ),
+            prev AS (
+              SELECT p.pkg_name,
+                     a.assm_id AS previous_assm,
+                     a.assm_desc AS previous_desc,
+                     v.version AS previous_version,
+                     v.pkg_date_created AS previous_time
+              FROM (
+                  SELECT an.assm_id,
+                         pv.pkg_id,
+                         pv.pkg_vrs_id AS pvid,
+                         ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                  FROM repositories.assembly ca
+                  JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                  JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                  JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                  WHERE ca.assm_id = %s
+                        AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+              ) AS pvf
+              JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+              JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+              JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
+              WHERE pvf.rn = 1
+            )
+            SELECT
+              COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
+              CASE 
+                WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
+                WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
+                WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
+                    CASE 
+                        WHEN apt_version_compare(curr.current_version, prev.previous_version) > 0 THEN 3
+                        WHEN apt_version_compare(curr.current_version, prev.previous_version) < 0 THEN 4
+                        ELSE 5
+                    END
+                ELSE 5
+              END AS state,
+              prev.previous_assm,
+              prev.previous_desc,
+              prev.previous_version,
+              prev.previous_time,
+              curr.current_assm,
+              curr.current_desc,
+              curr.current_version,
+              curr.current_time
+            FROM curr
+            FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+        """
+        # Формируем список параметров (позиционные)
+        params_list = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
+        conditions = []
+
+        # Если задан поиск, добавляем условие для всех нужных столбцов:
+        if search_value:
+            search_clause = " (sub.pkg_name ILIKE %s OR " \
+                            "COALESCE(sub.current_desc, '') ILIKE %s OR " \
+                            "COALESCE(sub.current_version, '') ILIKE %s OR " \
+                            "COALESCE(sub.previous_desc, '') ILIKE %s OR " \
+                            "COALESCE(sub.previous_version, '') ILIKE %s)"
+            conditions.append(search_clause)
+            sp = f"%{search_value}%"
+            params_list.extend([sp] * 5)
+        if state_filter:
+            state_values = [s.strip() for s in state_filter.split(',') if s.strip().isdigit()]
+            if state_values:
+                placeholders = ','.join(['%s'] * len(state_values))
+                conditions.append(f"sub.state IN ({placeholders})")
+                params_list.extend(state_values)
+        final_sql = "SELECT COUNT(*) FROM (" + base_sql + ") AS sub"
+        if conditions:
+            final_sql += " WHERE " + " AND ".join(conditions)
+
+        print("Count Query:", final_sql, params_list)
+        result = self.db_helper.execute_query(final_sql, params_list)
+        # Если execute_query возвращает список кортежей:
+        return result[0][0] if result else 0
+
+
+# model.py
+class OlderAssemblies(Base):
+    def get_older_assemblies(self, prj_id, assm_id):
+        # Получаем дату создания выбранной сборки
+        query = """
+            SELECT assm_date_created 
+            FROM repositories.assembly 
+            WHERE assm_id = %s
+        """
+        result = self.db_helper.execute_query(query, [assm_id])
+        if not result:
+            return None
+        current_date = result[0][0]
+
+        # Выбираем все сборки проекта с датой создания меньше текущей сборки
+        query2 = """
+            SELECT assm_id, assm_date_created, assm_desc, assm_version
+            FROM repositories.assembly
+            WHERE prj_id = %s AND assm_date_created < %s
+            ORDER BY assm_date_created DESC
+        """
+        assemblies = self.db_helper.execute_query(query2, [prj_id, current_date])
+        data = []
+        if assemblies:
+            for row in assemblies:
+                data.append({
+                    "assm_id": row[0],
+                    "assm_date_created": row[1].isoformat() if row[1] else "",
+                    "assm_desc": row[2],
+                    "assm_version": row[3]
+                })
+        return data

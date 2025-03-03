@@ -28,6 +28,8 @@ print(STATIC_PATH)
 app.add_static_route('/', str(STATIC_PATH))
 app.add_route("/cve", CVEResource())
 app.add_route('/bdu', BDURource())
+app.add_route("/auth/login", LoginResource())
+app.add_route("/auth/register", RegisterResource())
 app.add_route("/{resource}/{resource_id}/info", BreadcrumbResource())
 app.add_route("/projects", ProjectResource())  #+
 app.add_route("/projects/{prj_id}", ProjectResource()) #+
@@ -43,7 +45,7 @@ app.add_route('/projects/{prj_id}/assembly/add', AddAssmResource())  #+
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/delete', DeleteAssmResource())  #+
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/vulnerability/{resolved}', AssemblyCveResource())  #+
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/joint', AssemblyJointResource())  #---
-app.add_route('/projects/{prj_id}/assembly/{assm_id}/compare', AssemblyCompareResource())  #--
+# app.add_route('/projects/{prj_id}/assembly/{assm_id}/compare', AssemblyCompareResource())  #--
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/package', PackageResource())  #+
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/package/{pkg_name}/vulnerabilities', PackageCVEResource())
 # app.add_route('/projects/{prj_id}/assembly/{assm_id}/package/{pkg_id}/vulnerabilities', PackageCVEResource())
@@ -56,5 +58,8 @@ app.add_route('/', IndexResource())
 # app.add_route('/{path}', IndexResource())
 app.add_route('/api/stats', StatsResource())
 app.add_route('/api/cve/{cve_name}/links', CVELinksResource())
+app.add_route('/projects/{prj_id}/assembly/{assm_id}/compare/{previous_assm_id}', AssemblyCompareResource())
+app.add_route('/projects/{prj_id}/assembly/olderThan/{assm_id}', OlderAssembliesResource())
+
 
 
