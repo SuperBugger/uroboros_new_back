@@ -18,7 +18,17 @@ from api.query_commands.package_query import PackageApi
 from api.query_commands.project_query import ProjectApi
 from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB, SECRET_ADMIN_CODE
 from connection import DbHelper
+import logging
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+file_handler = logging.FileHandler("/tmp/report.log", mode='w', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 class Column(object):
     def __init__(self, type_column, pk=False, fk=None):
@@ -1462,7 +1472,7 @@ class Breadcrumb(Base):
 
     def get_assembly_date(self, assembly_id):
         query = """
-            SELECT assm_date_created, assm_version
+            SELECT assm_date_created, assm_desc
             FROM repositories.assembly 
             WHERE assm_id = %s
         """
@@ -1739,200 +1749,217 @@ class User(Base):
 
 
 class AssemblyCompare(Base):
+
     def get_comparison_paginated(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous,
                                  search_value, state_filter, order_column, order_dir, start, length):
-        # Рабочий базовый запрос без ORDER BY и LIMIT/OFFSET
-        base_sql = f"""
-                    WITH curr AS (
-                      SELECT p.pkg_name,
-                             a.assm_id AS current_assm,
-                             a.assm_desc AS current_desc,
-                             v.version AS current_version,
-                             v.pkg_date_created AS current_time
-                      FROM (
-                          SELECT an.assm_id,
-                                 pv.pkg_id,
-                                 pv.pkg_vrs_id AS pvid,
-                                 ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
-                          FROM repositories.assembly ca
-                          JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-                          JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-                          JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
-                          WHERE ca.assm_id = %s
-                                AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
-                      ) AS pvf
-                      JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
-                      JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-                      JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
-                      WHERE pvf.rn = 1
-                    ),
-                    prev AS (
-                      SELECT p.pkg_name,
-                             a.assm_id AS previous_assm,
-                             a.assm_desc AS previous_desc,
-                             v.version AS previous_version,
-                             v.pkg_date_created AS previous_time
-                      FROM (
-                          SELECT an.assm_id,
-                                 pv.pkg_id,
-                                 pv.pkg_vrs_id AS pvid,
-                                 ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
-                          FROM repositories.assembly ca
-                          JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-                          JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-                          JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
-                          WHERE ca.assm_id = %s
-                                AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
-                      ) AS pvf
-                      JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
-                      JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-                      JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
-                      WHERE pvf.rn = 1
-                    )
-                    SELECT
-                      COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
-                      CASE 
-                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
-                        WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
-                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
-                            CASE 
-                                WHEN apt_version_compare(curr.current_version, prev.previous_version) > 0 THEN 3
-                                WHEN apt_version_compare(curr.current_version, prev.previous_version) < 0 THEN 4
-                                ELSE 5
-                            END
-                        ELSE 5
-                      END AS state,
-                      prev.previous_assm,
-                      prev.previous_desc,
-                      prev.previous_version,
-                      prev.previous_time,
-                      curr.current_assm,
-                      curr.current_desc,
-                      curr.current_version,
-                      curr.current_time
-                    FROM curr
-                    FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
-                """
-        # Оборачиваем в подзапрос
-        sql = f"SELECT * FROM ({base_sql}) AS sub"
-        # Формируем список параметров в том порядке, как они используются:
-        params = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
-        conditions = []
-
-        # Добавляем условие поиска, если search_value не пустой
+        params = []
+        # Для CTE "curr": сначала подставляем параметры подзапроса
+        params.extend([current_assm_id, include_joint_current])
+        # Формируем условие поиска для "curr"
         if search_value:
-            search_clause = " (sub.pkg_name ILIKE %s OR " \
-                            "COALESCE(sub.current_desc, '') ILIKE %s OR " \
-                            "COALESCE(sub.current_version, '') ILIKE %s OR " \
-                            "COALESCE(sub.previous_desc, '') ILIKE %s OR " \
-                            "COALESCE(sub.previous_version, '') ILIKE %s)"
-            conditions.append(search_clause)
             sp = f"%{search_value}%"
-            params.extend([sp] * 5)
+            search_condition_curr = " AND (p.pkg_name ILIKE %s OR v.version ILIKE %s)"
+            curr_search_params = [sp, sp]
+        else:
+            search_condition_curr = ""
+            curr_search_params = []
+        params.extend(curr_search_params)
+
+        # Для CTE "prev": сначала параметры подзапроса
+        params.extend([previous_assm_id, include_joint_previous])
+        # Условие поиска для "prev"
+        if search_value:
+            search_condition_prev = " AND (p.pkg_name ILIKE %s OR v.version ILIKE %s)"
+            prev_search_params = [sp, sp]
+        else:
+            search_condition_prev = ""
+            prev_search_params = []
+        params.extend(prev_search_params)
+
+        base_sql = f"""
+               WITH curr AS (
+                 SELECT p.pkg_name,
+                        v.version AS current_version,
+                        v.pkg_date_created AS current_time
+                 FROM (
+                     SELECT an.assm_id,
+                            pv.pkg_id,
+                            pv.pkg_vrs_id AS pvid,
+                            ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                     FROM repositories.assembly ca
+                     JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                     JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                     JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                     WHERE ca.assm_id = %s
+                       AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                 ) AS pvf
+                 JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+                 JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                 WHERE pvf.rn = 1
+                 {search_condition_curr}
+               ),
+               prev AS (
+                 SELECT p.pkg_name,
+                        v.version AS previous_version,
+                        v.pkg_date_created AS previous_time
+                 FROM (
+                     SELECT an.assm_id,
+                            pv.pkg_id,
+                            pv.pkg_vrs_id AS pvid,
+                            ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                     FROM repositories.assembly ca
+                     JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                     JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                     JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                     WHERE ca.assm_id = %s
+                       AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                 ) AS pvf
+                 JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
+                 JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                 WHERE pvf.rn = 1
+                 {search_condition_prev}
+               )
+               SELECT
+                 COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
+                 CASE 
+                    WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
+                    WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
+                    WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
+                      CASE 
+                        WHEN comp.ver > 0 THEN 3
+                        WHEN comp.ver < 0 THEN 4
+                      ELSE 5
+                    END
+                 ELSE 5
+                 END AS state,
+                 prev.previous_version,
+                 prev.previous_time,
+                 curr.current_version,
+                 curr.current_time
+               FROM curr
+               FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+               LEFT JOIN LATERAL (
+                SELECT CASE 
+                         WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL 
+                         THEN apt_version_compare(curr.current_version, prev.previous_version)
+                         ELSE NULL 
+                       END AS ver
+            ) comp ON TRUE
+           """
+        # Если задан фильтр по состоянию
         if state_filter:
             state_values = [s.strip() for s in state_filter.split(',') if s.strip().isdigit()]
             if state_values:
                 placeholders = ','.join(['%s'] * len(state_values))
-                conditions.append(f"sub.state IN ({placeholders})")
+                base_sql += f" WHERE (CASE WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1 WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2 WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN (CASE WHEN comp.ver > 0 THEN 3 WHEN comp.ver < 0 THEN 4 ELSE 5 END) ELSE 5 END) IN ({placeholders})"
                 params.extend(state_values)
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
 
-        # Определяем динамический ORDER BY:
+        # Добавляем ORDER BY, LIMIT и OFFSET
         orderable_columns = {
-            "pkg_name": "sub.pkg_name",
-            "state": "sub.state",
-            "previous_assm": "sub.previous_assm",
-            "previous_desc": "sub.previous_desc",
-            "previous_version": "sub.previous_version",
-            "previous_time": "sub.previous_time",
-            "current_assm": "sub.current_assm",
-            "current_desc": "sub.current_desc",
-            "current_version": "sub.current_version",
-            "current_time": "sub.current_time"
+            "pkg_name": "pkg_name",
+            "state": "state",
+            "previous_version": "previous_version",
+            "previous_time": "previous_time",
+            "current_version": "current_version",
+            "current_time": "current_time"
         }
         if order_column and order_dir:
-            order_by = f" ORDER BY {orderable_columns.get(order_column, 'sub.pkg_name')} {order_dir.upper()}"
+            order_by = f" ORDER BY {orderable_columns.get(order_column, 'pkg_name')} {order_dir.upper()}"
         else:
-            order_by = " ORDER BY sub.pkg_name ASC"
-        sql += order_by
-        sql += " LIMIT %s OFFSET %s"
+            order_by = " ORDER BY pkg_name ASC"
+        base_sql += order_by
+        base_sql += " LIMIT %s OFFSET %s"
         params.extend([length, start])
 
-        print("Final Query:", sql, params)
-        result = self.db_helper.execute_query(sql, params)
+        print("Final Query:", base_sql, params)
+        result = self.db_helper.execute_query(base_sql, params)
         data = []
         if result:
             for row in result:
                 data.append({
                     "pkg_name": row[0],
                     "state": row[1],
-                    "previous_assm": row[2],
-                    "previous_desc": row[3],
-                    "previous_version": row[4],
-                    "previous_time": row[5].strftime('%Y-%m-%d %H:%M:%S') if row[5] else "",
-                    "current_assm": row[6],
-                    "current_desc": row[7],
-                    "current_version": row[8],
-                    "current_time": row[9].strftime('%Y-%m-%d %H:%M:%S') if row[9] else ""
+                    "previous_version": row[2],
+                    "previous_time": row[3].strftime('%Y-%m-%d %H:%M:%S') if row[3] else "",
+                    "current_version": row[4],
+                    "current_time": row[5].strftime('%Y-%m-%d %H:%M:%S') if row[5] else ""
                 })
         return data
 
     def get_total_count(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous):
         sql = f"""
-        WITH curr AS (
-          SELECT p.pkg_name
-          FROM (
-              SELECT an.assm_id,
-                     pv.pkg_id,
-                     pv.pkg_vrs_id AS pvid,
-                     ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
-              FROM repositories.assembly ca
-              JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-              JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-              JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
-              WHERE ca.assm_id = %s
-                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
-          ) AS pvf
-          JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-          WHERE pvf.rn = 1
-        ),
-        prev AS (
-          SELECT p.pkg_name
-          FROM (
-              SELECT an.assm_id,
-                     pv.pkg_id,
-                     pv.pkg_vrs_id AS pvid,
-                     ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
-              FROM repositories.assembly ca
-              JOIN repositories.assembly a ON a.prj_id = ca.prj_id
-              JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
-              JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
-              WHERE ca.assm_id = %s
-                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
-          ) AS pvf
-          JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-          WHERE pvf.rn = 1
-        ),
-        combined AS (
-          SELECT COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name
-          FROM curr
-          FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
-        )
-        SELECT COUNT(*) FROM combined;
+            WITH curr AS (
+                SELECT p.pkg_name
+                FROM (
+                    SELECT an.assm_id,
+                           pv.pkg_id,
+                           pv.pkg_vrs_id AS pvid,
+                           ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                    FROM repositories.assembly ca
+                    JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                    JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                    JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                    WHERE ca.assm_id = %s
+                      AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                ) AS pvf
+                JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                WHERE pvf.rn = 1
+            ),
+            prev AS (
+                SELECT p.pkg_name
+                FROM (
+                    SELECT an.assm_id,
+                           pv.pkg_id,
+                           pv.pkg_vrs_id AS pvid,
+                           ROW_NUMBER() OVER (PARTITION BY pv.pkg_id ORDER BY pv.pkg_date_created DESC) AS rn
+                    FROM repositories.assembly ca
+                    JOIN repositories.assembly a ON a.prj_id = ca.prj_id
+                    JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
+                    JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
+                    WHERE ca.assm_id = %s
+                      AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                ) AS pvf
+                JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
+                WHERE pvf.rn = 1
+            )
+            SELECT COUNT(*) FROM (
+                SELECT COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name
+                FROM curr
+                FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+            ) AS combined;
         """
         params = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
+        print("Total Count Query:", sql, params)
         result = self.db_helper.execute_query(sql, params)
         return result[0][0] if result else 0
 
     def get_filtered_count(self, current_assm_id, previous_assm_id, include_joint_current, include_joint_previous,
                            search_value, state_filter):
-        # Основной запрос без ORDER BY и LIMIT/OFFSET:
-        base_sql = """
+        params = []
+        # Для CTE "curr": сначала параметры подзапроса
+        params.extend([current_assm_id, include_joint_current])
+        if search_value:
+            sp = f"%{search_value}%"
+            search_condition_curr = " AND (p.pkg_name ILIKE %s OR v.version ILIKE %s)"
+            curr_search_params = [sp, sp]
+        else:
+            search_condition_curr = ""
+            curr_search_params = []
+        params.extend(curr_search_params)
+
+        # Для CTE "prev": сначала параметры подзапроса
+        params.extend([previous_assm_id, include_joint_previous])
+        if search_value:
+            search_condition_prev = " AND (p.pkg_name ILIKE %s OR v.version ILIKE %s)"
+            prev_search_params = [sp, sp]
+        else:
+            search_condition_prev = ""
+            prev_search_params = []
+        params.extend(prev_search_params)
+
+        base_sql = f"""
             WITH curr AS (
               SELECT p.pkg_name,
-                     a.assm_id AS current_assm,
-                     a.assm_desc AS current_desc,
                      v.version AS current_version,
                      v.pkg_date_created AS current_time
               FROM (
@@ -1945,17 +1972,15 @@ class AssemblyCompare(Base):
                   JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
                   JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
                   WHERE ca.assm_id = %s
-                        AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
               ) AS pvf
               JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
               JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-              JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
               WHERE pvf.rn = 1
+              {search_condition_curr}
             ),
             prev AS (
               SELECT p.pkg_name,
-                     a.assm_id AS previous_assm,
-                     a.assm_desc AS previous_desc,
                      v.version AS previous_version,
                      v.pkg_date_created AS previous_time
               FROM (
@@ -1968,68 +1993,51 @@ class AssemblyCompare(Base):
                   JOIN repositories.assm_pkg_vrs an ON an.assm_id = a.assm_id
                   JOIN repositories.pkg_version pv ON pv.pkg_vrs_id = an.pkg_vrs_id
                   WHERE ca.assm_id = %s
-                        AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
+                    AND (a.assm_id = ca.assm_id OR (%s::boolean AND a.assm_date_created < ca.assm_date_created))
               ) AS pvf
               JOIN repositories.pkg_version AS v ON v.pkg_vrs_id = pvf.pvid
               JOIN repositories.package p ON p.pkg_id = pvf.pkg_id
-              JOIN repositories.assembly AS a ON a.assm_id = pvf.assm_id
               WHERE pvf.rn = 1
+              {search_condition_prev}
             )
-            SELECT
-              COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
-              CASE 
-                WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
-                WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
-                WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
-                    CASE 
-                        WHEN apt_version_compare(curr.current_version, prev.previous_version) > 0 THEN 3
-                        WHEN apt_version_compare(curr.current_version, prev.previous_version) < 0 THEN 4
-                        ELSE 5
-                    END
-                ELSE 5
-              END AS state,
-              prev.previous_assm,
-              prev.previous_desc,
-              prev.previous_version,
-              prev.previous_time,
-              curr.current_assm,
-              curr.current_desc,
-              curr.current_version,
-              curr.current_time
-            FROM curr
-            FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+            SELECT COUNT(*) FROM (
+              SELECT COALESCE(curr.pkg_name, prev.pkg_name) AS pkg_name,
+                     CASE 
+                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NULL THEN 1
+                        WHEN curr.current_version IS NULL AND prev.previous_version IS NOT NULL THEN 2
+                        WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL THEN
+                          CASE 
+                            WHEN comp.ver > 0 THEN 3
+                            WHEN comp.ver < 0 THEN 4
+                            ELSE 5
+                          END
+                     ELSE 5
+                     END AS state
+              FROM curr
+              FULL OUTER JOIN prev ON curr.pkg_name = prev.pkg_name
+              LEFT JOIN LATERAL (
+                SELECT CASE 
+                         WHEN curr.current_version IS NOT NULL AND prev.previous_version IS NOT NULL
+                         THEN apt_version_compare(curr.current_version, prev.previous_version)
+                         ELSE NULL 
+                       END AS ver
+              ) comp ON TRUE
+            ) AS sub
         """
-        # Формируем список параметров (позиционные)
-        params_list = [current_assm_id, include_joint_current, previous_assm_id, include_joint_previous]
-        conditions = []
-
-        # Если задан поиск, добавляем условие для всех нужных столбцов:
-        if search_value:
-            search_clause = " (sub.pkg_name ILIKE %s OR " \
-                            "COALESCE(sub.current_desc, '') ILIKE %s OR " \
-                            "COALESCE(sub.current_version, '') ILIKE %s OR " \
-                            "COALESCE(sub.previous_desc, '') ILIKE %s OR " \
-                            "COALESCE(sub.previous_version, '') ILIKE %s)"
-            conditions.append(search_clause)
-            sp = f"%{search_value}%"
-            params_list.extend([sp] * 5)
+        # Если задан фильтр по состоянию, добавляем его на внешнем уровне
         if state_filter:
             state_values = [s.strip() for s in state_filter.split(',') if s.strip().isdigit()]
             if state_values:
                 placeholders = ','.join(['%s'] * len(state_values))
-                conditions.append(f"sub.state IN ({placeholders})")
-                params_list.extend(state_values)
-        final_sql = "SELECT COUNT(*) FROM (" + base_sql + ") AS sub"
-        if conditions:
-            final_sql += " WHERE " + " AND ".join(conditions)
+                base_sql += f" WHERE state IN ({placeholders})"
+                params.extend(state_values)
+        final_sql = base_sql
 
-        print("Count Query:", final_sql, params_list)
-        result = self.db_helper.execute_query(final_sql, params_list)
-        # Если execute_query возвращает список кортежей:
+        print("Filtered Count Query:", final_sql, params)
+        result = self.db_helper.execute_query(final_sql, params)
         return result[0][0] if result else 0
 
 
-# model.py
 class OlderAssemblies(Base):
     def get_older_assemblies(self, prj_id, assm_id):
         # Получаем дату создания выбранной сборки
@@ -2061,3 +2069,116 @@ class OlderAssemblies(Base):
                     "assm_version": row[3]
                 })
         return data
+
+
+class Report(Base):
+    def generate_report(self, prj_id, assm_id, previous_assm_id):
+        # 1. Получение метаданных сборок
+        meta_query = "SELECT assm_date_created, assm_desc FROM repositories.assembly WHERE assm_id = %s"
+        current_meta = self.db_helper.execute_query(meta_query, (assm_id,))
+        previous_meta = self.db_helper.execute_query(meta_query, (previous_assm_id,))
+        if not current_meta or not previous_meta:
+            raise Exception("Не найдены данные для одной из сборок.")
+        current_date, current_desc = current_meta[0]
+        previous_date, previous_desc = previous_meta[0]
+
+        # 2. Получение имени проекта (для заголовка)
+        proj_query = "SELECT prj_name FROM repositories.project WHERE prj_id = %s"
+        proj_res = self.db_helper.execute_query(proj_query, (prj_id,))
+        project_name = proj_res[0][0] if proj_res else "Unknown Project"
+
+        # Формирование заголовка отчёта
+        header = (f"Проект: {project_name}\n"
+                  f"Разность сборок: {previous_date.strftime('%Y-%m-%d %H:%M:%S')} ({previous_desc}) ⇒ "
+                  f"{current_date.strftime('%Y-%m-%d %H:%M:%S')} ({current_desc})\n")
+        report_lines = [header]
+
+        # 3. Получение всех сборок проекта между датами предыдущей и текущей сборок (включительно)
+        asm_query = """
+            SELECT assm_id, assm_date_created 
+            FROM repositories.assembly 
+            WHERE prj_id = %s 
+              AND assm_date_created BETWEEN %s AND %s
+            ORDER BY assm_date_created ASC
+        """
+        assemblies = self.db_helper.execute_query(asm_query, (prj_id, previous_date, current_date))
+        if not assemblies:
+            raise Exception("Не найдены сборки в указанном интервале.")
+        # Собираем список ID сборок
+        assembly_ids = [row[0] for row in assemblies]
+
+        # 4. Получение цепочки версий для каждого пакета, участвующего в этих сборках.
+        # Добавляем также идентификатор pkg_vrs_id для последующего запроса changelog.
+        chain_query = """
+            SELECT p.pkg_name, v.version, v.pkg_date_created, v.author_name, v.pkg_vrs_id
+            FROM repositories.assembly a
+            JOIN repositories.assm_pkg_vrs an ON a.assm_id = an.assm_id
+            JOIN repositories.pkg_version v ON v.pkg_vrs_id = an.pkg_vrs_id
+            JOIN repositories.package p ON p.pkg_id = v.pkg_id
+            WHERE a.assm_id = ANY(%s)
+            ORDER BY p.pkg_name, a.assm_date_created ASC
+        """
+        packages_data = self.db_helper.execute_query(chain_query, (assembly_ids,))
+        chain_by_pkg = {}
+        for row in packages_data:
+            pkg_name, version, pkg_date, author, pkg_vrs_id = row
+            chain_by_pkg.setdefault(pkg_name, []).append({
+                "version": version,
+                "date": pkg_date,
+                "author": author,
+                "pkg_vrs_id": pkg_vrs_id
+            })
+
+        # 5. Обработка каждого пакета – если крайние версии различаются, формируем блок отчёта.
+        for pkg_name, versions in chain_by_pkg.items():
+            # Сортируем по дате (возрастание)
+            versions.sort(key=lambda x: x["date"])
+            first_ver = versions[0]["version"]
+            last_ver = versions[-1]["version"]
+            # Проверяем изменение между крайними версиями с помощью apt_version_compare
+            comp_query = "SELECT apt_version_compare(%s, %s)"
+            comp_res = self.db_helper.execute_query(comp_query, (first_ver, last_ver))
+            if not comp_res or comp_res[0][0] == 0:
+                # Если изменений нет – пропускаем пакет
+                continue
+            comp_val = comp_res[0][0]
+            overall_status = "повышен" if comp_val < 0 else "понижен"
+            summary_line = (f"{pkg_name} - {overall_status}: "
+                            f"{first_ver}({versions[0]['date'].strftime('%Y-%m-%d %H:%M:%S')})⇒"
+                            f"{last_ver}({versions[-1]['date'].strftime('%Y-%m-%d %H:%M:%S')})")
+            report_lines.append(summary_line)
+
+            # 6. Для каждой пары последовательных версий (идём от последней к первой) формируем строку изменения
+            # и запрашиваем соответствующие записи changelog.
+            # Обрабатываем в обратном порядке: от current к предыдущим
+            for i in range(len(versions) - 1, 0, -1):
+                curr = versions[i]
+                prev = versions[i - 1]
+                # Получаем сравнение версий
+                comp_pair = self.db_helper.execute_query(comp_query, (prev["version"], curr["version"]))
+                if not comp_pair or comp_pair[0][0] == 0:
+                    continue  # Если изменений нет – пропускаем
+                pair_val = comp_pair[0][0]
+                # Определяем статус для этого шага; здесь условимся:
+                # Если comp < 0, то считается, что версия "добавлена" (новее), иначе – "удалён"
+                step_status = "Добавлен" if pair_val < 0 else "Удалён"
+                ver_line = (f"  {step_status} - Версия:{curr['version']} от {curr['author']} от "
+                            f"{curr['date'].strftime('%Y-%m-%d %H:%M:%S')}")
+                report_lines.append(ver_line)
+                # 7. Получение записей changelog для данной версии (используем pkg_vrs_id)
+                pkg_vrs_id = curr.get("pkg_vrs_id")
+                if pkg_vrs_id:
+                    changelog_query = """
+                        SELECT log_desc 
+                        FROM repositories.changelog 
+                        WHERE pkg_vrs_id = %s
+                        ORDER BY date_added ASC
+                    """
+                    changelog_res = self.db_helper.execute_query(changelog_query, (pkg_vrs_id,))
+                    for cl in changelog_res:
+                        # Каждая запись выводится с префиксом "* "
+                        report_lines.append(f"      * {cl[0]}")
+        return "\n".join(report_lines)
+
+
+

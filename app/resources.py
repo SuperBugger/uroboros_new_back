@@ -13,7 +13,7 @@ from reportlab.pdfgen import canvas
 from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB
 from connection import DbHelper
 from model import Project, Assembly, Package, Vulnerability, Changelog, CVE, BDU, Stats, Breadcrumb, User, \
-    AssemblyCompare, OlderAssemblies
+    AssemblyCompare, OlderAssemblies, Report
 from api.query_commands.base_query import QueryError
 
 SECRET_ADMIN_CODE = "admin"
@@ -1091,34 +1091,167 @@ class AssemblyCompareResource:
         self.compare_model = AssemblyCompare()
 
     def on_get(self, req, resp, prj_id, assm_id, previous_assm_id):
+        # Параметры экспорта
+        export_all = req.get_param_as_bool('export_all', default=False)
+        export_format = req.get_param('format', default=None)
+
+        # Параметры пагинации, поиска и сортировки
         start = int(req.get_param('start', default=0))
         length = int(req.get_param('length', default=10))
         search_value = req.get_param('search[value]', default='')
         order_column = req.get_param('order_column', default=None)
         order_dir = req.get_param('order_dir', default=None)
 
+        # Дополнительные параметры сравнения
         include_joint_current = req.get_param_as_bool('include_joint_current', default=False)
         include_joint_previous = req.get_param_as_bool('include_joint_previous', default=False)
         state_filter = req.get_param('compare_state_filter', default=None)
 
-        data = self.compare_model.get_comparison_paginated(
-            assm_id, previous_assm_id,
-            include_joint_current, include_joint_previous,
-            search_value, state_filter, order_column, order_dir, start, length
-        )
+        # Словарь для маппинга состояния
+        state_mapping = {1: 'Добавлен', 2: 'Удален', 3: 'Повышен', 4: 'Понижен', 5: 'Неизменен'}
 
-        total = self.compare_model.get_total_count(assm_id, previous_assm_id,
-                                                   include_joint_current, include_joint_previous)
-        filtered = self.compare_model.get_filtered_count(assm_id, previous_assm_id,
-                                                         include_joint_current, include_joint_previous,
-                                                         search_value, state_filter)
-        resp.media = {
-            "draw": req.get_param('draw', default=None),
-            "recordsTotal": total,
-            "recordsFiltered": filtered,
-            "data": data
-        }
-        resp.status = falcon.HTTP_200
+        if export_format:
+            # Если требуется экспорт всех данных, получаем общее количество и запрашиваем все записи
+            if export_all:
+                total = self.compare_model.get_total_count(
+                    assm_id, previous_assm_id,
+                    include_joint_current, include_joint_previous
+                )
+                data = self.compare_model.get_comparison_paginated(
+                    assm_id, previous_assm_id,
+                    include_joint_current, include_joint_previous,
+                    search_value, state_filter, order_column, order_dir, 0, total
+                )
+            else:
+                data = self.compare_model.get_comparison_paginated(
+                    assm_id, previous_assm_id,
+                    include_joint_current, include_joint_previous,
+                    search_value, state_filter, order_column, order_dir, start, length
+                )
+
+            # Определяем заголовки таблицы динамически (если данные есть)
+            headers = list(data[0].keys()) if data else []
+
+            if export_format == 'csv':
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(headers)
+                for row in data:
+                    csv_row = []
+                    for header in headers:
+                        value = row.get(header, "")
+                        if header == 'state':
+                            value = state_mapping.get(value, value)
+                        csv_row.append(value)
+                    writer.writerow(csv_row)
+                resp.body = output.getvalue()
+                resp.content_type = 'text/csv'
+                resp.append_header('Content-Disposition',
+                                   f'attachment; filename="assembly_compare_{assm_id}_{previous_assm_id}.csv"')
+                resp.status = falcon.HTTP_200
+                return
+
+
+            elif export_format == 'excel':
+                output = io.BytesIO()
+                workbook = openpyxl.Workbook()
+                sheet = workbook.active
+                sheet.title = "Comparison"
+                sheet.append(headers)
+                for row in data:
+                    excel_row = []
+                    for header in headers:
+                        value = row.get(header, "")
+                        if header == 'state':
+                            value = state_mapping.get(value, value)
+                        excel_row.append(value)
+                    sheet.append(excel_row)
+                workbook.save(output)
+                resp.body = output.getvalue()
+                resp.content_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                resp.append_header('Content-Disposition',
+                                   f'attachment; filename="assembly_compare_{assm_id}_{previous_assm_id}.xlsx"')
+                resp.status = falcon.HTTP_200
+                return
+
+            elif export_format == 'pdf':
+                output = io.BytesIO()
+                pdf = canvas.Canvas(output, pagesize=A4)
+                pdf.setTitle(f"Assembly Comparison {assm_id} vs {previous_assm_id}")
+                pdf.setFont("Helvetica", 16)
+                pdf.drawString(50, 800, f"Comparison for Assemblies {assm_id} and {previous_assm_id}")
+                pdf.setFont("Helvetica", 10)
+                y = 780
+                header_line = " | ".join(headers)
+                pdf.drawString(50, y, header_line)
+                y -= 20
+                for row in data:
+                    row_values = []
+                    for header in headers:
+                        value = row.get(header, "")
+                        if header == 'state':
+                            value = state_mapping.get(value, value)
+                        row_values.append(str(value))
+                    row_line = " | ".join(row_values)
+                    pdf.drawString(50, y, row_line)
+                    y -= 20
+                    if y < 50:
+                        pdf.showPage()
+                        y = 800
+                pdf.save()
+                resp.body = output.getvalue()
+                resp.content_type = 'application/pdf'
+                resp.append_header('Content-Disposition',
+                                   f'attachment; filename="assembly_compare_{assm_id}_{previous_assm_id}.pdf"')
+                resp.status = falcon.HTTP_200
+                return
+
+            elif export_format == 'print':
+                output = io.StringIO()
+                output.write("<html><body>")
+                output.write(f"<h1>Comparison for Assemblies {assm_id} and {previous_assm_id}</h1>")
+                output.write("<table border='1'><thead><tr>")
+                for header in headers:
+                    output.write(f"<th>{header}</th>")
+                output.write("</tr></thead><tbody>")
+                for row in data:
+                    output.write("<tr>")
+                    for header in headers:
+                        value = row.get(header, "")
+                        if header == 'state':
+                            value = state_mapping.get(value, value)
+                        output.write(f"<td>{value}</td>")
+                    output.write("</tr>")
+                output.write("</tbody></table>")
+                output.write("</body></html>")
+                resp.body = output.getvalue()
+                resp.content_type = 'text/html'
+                resp.status = falcon.HTTP_200
+                return
+
+        else:
+            # Обычная обработка запроса с пагинацией
+            data = self.compare_model.get_comparison_paginated(
+                assm_id, previous_assm_id,
+                include_joint_current, include_joint_previous,
+                search_value, state_filter, order_column, order_dir, start, length
+            )
+            total = self.compare_model.get_total_count(
+                assm_id, previous_assm_id,
+                include_joint_current, include_joint_previous
+            )
+            filtered = self.compare_model.get_filtered_count(
+                assm_id, previous_assm_id,
+                include_joint_current, include_joint_previous,
+                search_value, state_filter
+            )
+            resp.media = {
+                "draw": req.get_param('draw', default=None),
+                "recordsTotal": total,
+                "recordsFiltered": filtered,
+                "data": data
+            }
+            resp.status = falcon.HTTP_200
 
 
 # resources.py
@@ -1134,3 +1267,17 @@ class OlderAssembliesResource:
         else:
             resp.media = {'error': f'No assemblies found for project {prj_id} older than assembly {assm_id}'}
             resp.status = falcon.HTTP_404
+
+
+class ReportResource:
+    def __init__(self):
+        self.report_model = Report()
+
+    def on_get(self, req, resp, prj_id, assm_id, previous_assm_id):
+        try:
+            report_text = self.report_model.generate_report(prj_id, assm_id, previous_assm_id)
+            resp.media = {"report": report_text}
+            resp.status = falcon.HTTP_200
+        except Exception as e:
+            resp.media = {"error": str(e)}
+            resp.status = falcon.HTTP_500
