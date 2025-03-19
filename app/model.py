@@ -2181,4 +2181,51 @@ class Report(Base):
         return "\n".join(report_lines)
 
 
+class ReportPackageDetails(Base):
+    def get_package_details(self, pkg_name, prev_time, curr_time):
+        """
+        Возвращает для указанного пакета историю промежуточных версий
+        и агрегированные записи ченджлога, между датами prev_time и curr_time.
+        """
+        query = """
+        WITH intermediate AS (
+          SELECT 
+            pv.pkg_vrs_id,
+            pv.version,
+            pv.author_name,
+            pv.pkg_date_created,
+            c.log_desc
+          from repositories.pkg_version pv 
+          join repositories.package p on pv.pkg_id = p.pkg_id 
+          LEFT JOIN repositories.changelog c ON c.pkg_vrs_id = pv.pkg_vrs_id
+          WHERE p.pkg_name = %s
+            and pv.pkg_date_created > %s
+			and pv.pkg_date_created <= %s
+        )
+        SELECT 
+          pkg_vrs_id,
+          version,
+          author_name,
+          TO_CHAR(pkg_date_created, 'YYYY-MM-DD HH24:MI:SS') AS pv_date,
+          STRING_AGG(COALESCE(log_desc, ''), E'') AS changelog
+        FROM intermediate
+        GROUP BY pkg_vrs_id, version, author_name, pkg_date_created
+        ORDER BY pv_date DESC;
+        """
+        params = (pkg_name, prev_time, curr_time)
+        if pkg_name == 'acpi-support':
+            print("ФИНАЛЬНЫЙ ЗАПРОС ЛЯ ДОП ИНФЫ ПО ПАКЕТУ: ", query, params)
+
+        result = self.db_helper.execute_query(query, params)
+        details = []
+        if result:
+            for row in result:
+                details.append({
+                    "pkg_vrs_id": row[0],
+                    "version": row[1],
+                    "author": row[2],
+                    "assm_date": row[3],
+                    "changelog": row[4] or ""
+                })
+        return details
 

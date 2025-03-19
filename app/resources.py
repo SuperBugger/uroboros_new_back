@@ -13,7 +13,7 @@ from reportlab.pdfgen import canvas
 from configure import NAME_DB, USER_DB, PASSWORD_DB, HOST_DB, PORT_DB
 from connection import DbHelper
 from model import Project, Assembly, Package, Vulnerability, Changelog, CVE, BDU, Stats, Breadcrumb, User, \
-    AssemblyCompare, OlderAssemblies, Report
+    AssemblyCompare, OlderAssemblies, Report, ReportPackageDetails
 from api.query_commands.base_query import QueryError
 
 SECRET_ADMIN_CODE = "admin"
@@ -1094,10 +1094,11 @@ class AssemblyCompareResource:
         # Параметры экспорта
         export_all = req.get_param_as_bool('export_all', default=False)
         export_format = req.get_param('format', default=None)
+        all_data = req.get_param_as_bool('all', default=False)
 
         # Параметры пагинации, поиска и сортировки
         start = int(req.get_param('start', default=0))
-        length = int(req.get_param('length', default=10))
+        length = int(req.get_param('length', default=100))
         search_value = req.get_param('search[value]', default='')
         order_column = req.get_param('order_column', default=None)
         order_dir = req.get_param('order_dir', default=None)
@@ -1109,6 +1110,21 @@ class AssemblyCompareResource:
 
         # Словарь для маппинга состояния
         state_mapping = {1: 'Добавлен', 2: 'Удален', 3: 'Повышен', 4: 'Понижен', 5: 'Неизменен'}
+
+        # Если включена опция all_data, игнорируем пагинацию
+        if all_data:
+            total = self.compare_model.get_total_count(
+                assm_id, previous_assm_id,
+                include_joint_current, include_joint_previous
+            )
+            data = self.compare_model.get_comparison_paginated(
+                assm_id, previous_assm_id,
+                include_joint_current, include_joint_previous,
+                search_value, state_filter, order_column, order_dir, 0, total
+            )
+            resp.media = {"data": data}
+            resp.status = falcon.HTTP_200
+            return
 
         if export_format:
             # Если требуется экспорт всех данных, получаем общее количество и запрашиваем все записи
@@ -1281,3 +1297,22 @@ class ReportResource:
         except Exception as e:
             resp.media = {"error": str(e)}
             resp.status = falcon.HTTP_500
+
+
+class ReportPackageDetailsResource:
+    def __init__(self):
+        self.details_model = ReportPackageDetails()
+
+    def on_get(self, req, resp, pkg_name):
+        prev_time = req.get_param('prev_time')
+        curr_time = req.get_param('curr_time')
+
+        if not prev_time or not curr_time:
+            raise falcon.HTTPBadRequest(
+                title="Missing parameters",
+                description="Parameters 'prev_time' and 'curr_time' are required."
+            )
+
+        details = self.details_model.get_package_details(pkg_name, prev_time, curr_time)
+        resp.media = {"pkg_name": pkg_name, "details": details}
+        resp.status = falcon.HTTP_200

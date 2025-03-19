@@ -61,6 +61,6 @@ app.add_route('/api/cve/{cve_name}/links', CVELinksResource())
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/compare/{previous_assm_id}', AssemblyCompareResource())
 app.add_route('/projects/{prj_id}/assembly/olderThan/{assm_id}', OlderAssembliesResource())
 app.add_route('/projects/{prj_id}/assembly/{assm_id}/compare/{previous_assm_id}/report', ReportResource())
-
+app.add_route('/report/package_details/{pkg_name}', ReportPackageDetailsResource())
 
 
